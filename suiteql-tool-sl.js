@@ -4,9 +4,9 @@
 * @NModuleScope Public
 */
 
-define(['N/file', 'N/https', 'N/log', 'N/query', 'N/record', 'N/render', 'N/runtime', 'N/ui/serverWidget', 'N/url'], main);
+define(['N/file', 'N/https', 'N/log', 'N/query', 'N/record', 'N/render', 'N/runtime', 'N/ui/serverWidget', 'N/url'], initializeScriptModulesAndSetEntryPoint);
 
-var file, https, log, query, record, render, runtime, scriptURL, url, version = '2025.1-Moss-Beta';
+var file, https, log, query, record, render, runtime, scriptURL, url, version = '2025.1-Moss-Stable_version';
 var datatablesEnabled = true,
 	remoteLibraryEnabled = true,
 	rowsReturnedDefault = 50,
@@ -14,7 +14,7 @@ var datatablesEnabled = true,
 	workbooksEnabled = false;
 
 
-function main(fileModule, httpsModule, logModule, queryModule, recordModule, renderModule, runtimeModule, serverWidgetModule, urlModule) {
+function initializeScriptModulesAndSetEntryPoint(fileModule, httpsModule, logModule, queryModule, recordModule, renderModule, runtimeModule, serverWidgetModule, urlModule) {
 	file = fileModule;
 	https = httpsModule;
 	log = logModule;
@@ -30,27 +30,27 @@ function main(fileModule, httpsModule, logModule, queryModule, recordModule, ren
 			scriptURL = url.resolveScript({ scriptId: runtime.getCurrentScript().id, deploymentId: runtime.getCurrentScript().deploymentId, returnExternalURL: false });
 
 			if (context.request.method == 'POST') {
-				postRequestHandle(context);
+				handlePostRequest(context);
 			} else {
-				getRequestHandle(context);
+				handleGetRequest(context);
 			}
 		}
 	}
 }
 
-function getRequestHandle(context) {
+function handleGetRequest(context) {
 	if (context.request.parameters.hasOwnProperty('function')) {
-		if (context.request.parameters['function'] == 'tablesReference') { htmlGenerateTablesReference(context); }
-		if (context.request.parameters['function'] == 'documentGenerate') { documentGenerate(context); }
+		if (context.request.parameters['function'] == 'tablesReference') { generateTablesReferencePageHtml(context); }
+		if (context.request.parameters['function'] == 'documentGenerate') { generateDocumentFromQueryResults(context); }
 	} else {
 		var form = serverWidget.createForm({ title: `SuiteQL Query Tool`, hideNavBar: true });
 		var htmlField = form.addField({ id: 'custpage_field_html', type: serverWidget.FieldType.INLINEHTML, label: 'HTML' });
-		htmlField.defaultValue = htmlGenerateTool();
+		htmlField.defaultValue = generateMainToolInterfaceHtml();
 		context.response.writePage(form);
 	}
 }
 
-function postRequestHandle(context) {
+function handlePostRequest(context) {
 	context.response.setHeader('Content-Type', 'application/json');
 	var requestPayload;
 	try {
@@ -65,20 +65,20 @@ function postRequestHandle(context) {
 	}
 
 	switch (requestPayload['function']) {
-		case 'documentSubmit': return documentSubmit(context, requestPayload);
-		case 'queryExecute': return queryExecute(context, requestPayload);
-		case 'sqlFileExists': return sqlFileExists(context, requestPayload);
-		case 'sqlFileLoad': return sqlFileLoad(context, requestPayload);
-		case 'sqlFileSave': return sqlFileSave(context, requestPayload);
-		case 'localLibraryFilesGet': return localLibraryFilesGet(context);
-		case 'workbookLoad': return workbookLoad(context, requestPayload);
-		case 'workbooksGet': return workbooksGet(context);
+		case 'documentSubmit': return storeDocumentInfoInSessionForGeneration(context, requestPayload);
+		case 'queryExecute': return executeQueryAndReturnResults(context, requestPayload);
+		case 'sqlFileExists': return checkIfSqlFileExistsInLocalLibrary(context, requestPayload);
+		case 'sqlFileLoad': return loadSqlFileFromLocalLibrary(context, requestPayload);
+		case 'sqlFileSave': return saveSqlFileToLocalLibrary(context, requestPayload);
+		case 'localLibraryFilesGet': return getLocalQueryLibraryFiles(context);
+		case 'workbookLoad': return loadQueryFromWorkbook(context, requestPayload);
+		case 'workbooksGet': return getListOfAvailableWorkbooks(context);
 		default: log.error({ title: 'Payload - Unsupported Function', details: requestPayload['function'] });
 	}
 }
 
 
-function documentGenerate(context) {
+function generateDocumentFromQueryResults(context) {
 	try {
 		var sessionScope = runtime.getCurrentSession();
 		var docInfo = JSON.parse(sessionScope.get({ name: 'suiteQLDocumentInfo' }));
@@ -109,27 +109,27 @@ function documentGenerate(context) {
 			context.response.write(htmlString);
 		}
 	} catch (e) {
-		log.error({ title: 'documentGenerate Error', details: e });
+		log.error({ title: 'generateDocumentFromQueryResults Error', details: e });
 		context.response.write('Error: ' + e);
 	}
 }
 
 
-function documentSubmit(context, requestPayload) {
+function storeDocumentInfoInSessionForGeneration(context, requestPayload) {
 	try {
 		var responsePayload;
 		var sessionScope = runtime.getCurrentSession();
 		sessionScope.set({ name: 'suiteQLDocumentInfo', value: JSON.stringify(requestPayload) });
 		responsePayload = { 'submitted': true }
 	} catch (e) {
-		log.error({ title: 'documentSubmit Error', details: e });
+		log.error({ title: 'storeDocumentInfoInSessionForGeneration Error', details: e });
 		responsePayload = { 'error': e }
 	}
 	context.response.write(JSON.stringify(responsePayload, null, 5));
 }
 
 
-function queryExecute(context, requestPayload) {
+function executeQueryAndReturnResults(context, requestPayload) {
 	try {
 		var responsePayload;
 		var moreRecords = true;
@@ -180,14 +180,14 @@ function queryExecute(context, requestPayload) {
 			}
 		}
 	} catch (e) {
-		log.error({ title: 'queryExecute Error', details: e });
+		log.error({ title: 'executeQueryAndReturnResults Error', details: e });
 		responsePayload = { 'error': e }
 	}
 	context.response.write(JSON.stringify(responsePayload, null, 5));
 }
 
 
-function localLibraryFilesGet(context) {
+function getLocalQueryLibraryFiles(context) {
 	var responsePayload;
 	var sql = ` SELECT ID, Name, Description FROM File WHERE ( Folder = ? ) ORDER BY Name `;
 	var queryResults = query.runSuiteQL({ query: sql, params: [queryFolderID] });
@@ -201,7 +201,7 @@ function localLibraryFilesGet(context) {
 }
 
 
-function sqlFileExists(context, requestPayload) {
+function checkIfSqlFileExistsInLocalLibrary(context, requestPayload) {
 	var responsePayload;
 	var sql = ` SELECT ID FROM File WHERE ( Folder = ? ) AND ( Name = ? ) `;
 	var queryResults = query.runSuiteQL({ query: sql, params: [queryFolderID, requestPayload.filename] });
@@ -215,7 +215,7 @@ function sqlFileExists(context, requestPayload) {
 }
 
 
-function sqlFileLoad(context, requestPayload) {
+function loadSqlFileFromLocalLibrary(context, requestPayload) {
 	var responsePayload;
 	try {
 		var fileObj = file.load({ id: requestPayload.fileID });
@@ -223,14 +223,14 @@ function sqlFileLoad(context, requestPayload) {
 		responsePayload.file = fileObj;
 		responsePayload.sql = fileObj.getContents();
 	} catch (e) {
-		log.error({ title: 'sqlFileLoad Error', details: e });
+		log.error({ title: 'loadSqlFileFromLocalLibrary Error', details: e });
 		responsePayload = { 'error': e }
 	}
 	context.response.write(JSON.stringify(responsePayload, null, 5));
 }
 
 
-function sqlFileSave(context, requestPayload) {
+function saveSqlFileToLocalLibrary(context, requestPayload) {
 	var responsePayload;
 	try {
 		var fileObj = file.create({
@@ -245,38 +245,38 @@ function sqlFileSave(context, requestPayload) {
 		responsePayload = {}
 		responsePayload.fileID = fileID;
 	} catch (e) {
-		log.error({ title: 'sqlFileSave Error', details: e });
+		log.error({ title: 'saveSqlFileToLocalLibrary Error', details: e });
 		responsePayload = { 'error': e }
 	}
 	context.response.write(JSON.stringify(responsePayload, null, 5));
 }
 
-function workbookLoad(context, requestPayload) {
+function loadQueryFromWorkbook(context, requestPayload) {
 	var responsePayload;
 	try {
 		var loadedQuery = query.load({ id: requestPayload.scriptID });
 		responsePayload = {}
 		responsePayload.sql = loadedQuery.toSuiteQL().query;
 	} catch (e) {
-		log.error({ title: 'workbookLoad Error', details: e });
+		log.error({ title: 'loadQueryFromWorkbook Error', details: e });
 		responsePayload = { 'error': e }
 	}
 	context.response.write(JSON.stringify(responsePayload, null, 5));
 }
 
-function workbooksGet(context) {
+function getListOfAvailableWorkbooks(context) {
 	var responsePayload;
 	var sql = `
-		SELECT
-			ScriptID,
-			Name,
-			Description,
-			BUILTIN.DF( Owner ) AS Owner
-		FROM
-			UsrSavedSearch
-		ORDER BY
-			Name
-	`;
+        SELECT
+            ScriptID,
+            Name,
+            Description,
+            BUILTIN.DF( Owner ) AS Owner
+        FROM
+            UsrSavedSearch
+        ORDER BY
+            Name
+    `;
 	var queryResults = query.runSuiteQL({ query: sql, params: [] });
 	var records = queryResults.asMappedResults();
 	if (records.length > 0) {
@@ -287,7 +287,7 @@ function workbooksGet(context) {
 	context.response.write(JSON.stringify(responsePayload, null, 5));
 }
 
-function htmlGenerateTool() {
+function generateMainToolInterfaceHtml() {
 	return `
 		<!DOCTYPE html>
 		<html lang="en">
@@ -301,7 +301,17 @@ function htmlGenerateTool() {
 			<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
 			<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 			<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.25/css/jquery.dataTables.css">
- 			<script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.25/js/jquery.dataTables.js"></script>
+			<script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.25/js/jquery.dataTables.js"></script>
+			
+			<!-- CodeMirror resources -->
+			<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+			<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/show-hint.min.css">
+			<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material.min.css">
+			<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+			<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/sql/sql.min.js"></script>
+			<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/show-hint.min.js"></script>
+			<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/sql-hint.min.js"></script>
+
 			<style>
 				:root {
 					--primary-color: #3498db; --background-color: #f4f6f8; --editor-bg: #ffffff;
@@ -313,47 +323,47 @@ function htmlGenerateTool() {
 				.app-header { height: var(--header-height); background-color: var(--editor-bg); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
 				.header-icon { cursor: pointer; color: #576574; padding: 8px; border-radius: 50%; transition: background-color 0.2s ease; }
 				.header-icon:hover { background-color: #f1f2f6; }
-				.app-title { font-weight: 600; font-size: 16px; color: var(--text-color); }
 				.app-main { flex-grow: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 				.query-editor-area { flex: 1; display: flex; flex-direction: column; padding: 16px 16px 0 16px; position: relative; min-height: 100px; }
-#query {
-  flex-grow: 1;
-  border: 1px solid var(--border-color);
-  width: 90vw;          
-  max-width: 100%;       
-  border-radius: 8px;
-  padding: 16px;
-  font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  resize: none;
-  background-color: var(--editor-bg);
-  color: #2d3436;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow: auto;
-  box-sizing: border-box; 
-  margin: 16px auto;      
-}
-				#query:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2); }
+				#query { display: none; } /* Hide original textarea */
+				.CodeMirror {
+					flex-grow: 1;
+					border: 1px solid var(--border-color);
+					width: 90vw;
+					max-width: 100%;
+					border-radius: 8px;
+					font-size: 14px;
+					height: auto;
+					margin: 16px auto;
+					box-sizing: border-box;
+					transition: border-color 0.2s ease, box-shadow 0.2s ease;
+				}
+				.CodeMirror-focused {
+					outline: none !important;
+					border-color: var(--primary-color) !important;
+					box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2) !important;
+				}
+				.CodeMirror-hints {
+					z-index: 1001;
+					position: absolute;
+				}
 				#fileInfo { font-size: 12px; color: #8395a7; padding: 4px 8px; position: absolute; bottom: 8px; left: 24px; background: rgba(255,255,255,0.8); border-radius: 4px; }
-#resultsDiv {
-  flex-shrink: 0;
-  height: 50vh;
-  min-height: 100px;
-  width: 90vw; 
-  max-width: 100%; 
-  background-color: var(--editor-bg);
-  padding: 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  margin: 16px auto; 
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box; 
-}
+				#resultsDiv {
+					flex-shrink: 0;
+					height: 50vh;
+					min-height: 100px;
+					width: 90vw; 
+					max-width: 100%; 
+					background-color: var(--editor-bg);
+					padding: 16px;
+					border: 1px solid var(--border-color);
+					border-radius: 8px;
+					margin: 16px auto; 
+					overflow-y: auto;
+					display: flex;
+					flex-direction: column;
+					box-sizing: border-box; 
+				}
 				.results-header { margin-bottom: 12px; flex-shrink: 0; }
 				.results-title { font-weight: 600; font-size: 16px; color: #2c3e50; }
 				.results-meta { font-size: 12px; color: #8395a7; }
@@ -378,30 +388,11 @@ function htmlGenerateTool() {
 				.modal-content { border-radius: 8px; }
 				.btn { border-radius: 6px; }
 				#recentQueriesList .code-snippet { font-family: monospace; background-color: #f1f2f6; padding: 4px 8px; border-radius: 4px; word-break: break-all; display: block; max-height: 60px; overflow-y: auto; }
-
-				/* --- Styles for Horizontal Scrolling --- */
-
-				/* For the results table, the DataTables library creates a scrollable container.
-				   The class for this container is .dataTables_scrollBody. We are styling it here. */
-				.dataTables_scrollBody {
-					border: 1px solid #ddd;
-					border-radius: 4px;
-				}
-
-                /* Optional: Nicer looking scrollbar for Chrome/Safari */
-				.dataTables_scrollBody::-webkit-scrollbar {
-					height: 10px;
-				}
-				.dataTables_scrollBody::-webkit-scrollbar-track {
-					background: #f1f1f1;
-				}
-				.dataTables_scrollBody::-webkit-scrollbar-thumb {
-					background: #ccc;
-					border-radius: 4px;
-				}
-				.dataTables_scrollBody::-webkit-scrollbar-thumb:hover {
-					background: #aaa;
-				}
+				.dataTables_scrollBody { border: 1px solid #ddd; border-radius: 4px; }
+				.dataTables_scrollBody::-webkit-scrollbar { height: 10px; }
+				.dataTables_scrollBody::-webkit-scrollbar-track { background: #f1f1f1; }
+				.dataTables_scrollBody::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+				.dataTables_scrollBody::-webkit-scrollbar-thumb:hover { background: #aaa; }
 			</style>
 		</head>
 		<body>
@@ -412,7 +403,7 @@ function htmlGenerateTool() {
 				</header>
 				<main class="app-main">
 					<div class="query-editor-area">
-						<textarea id="query" placeholder="Enter SuiteQL query here..."></textarea>
+						<textarea id="query"></textarea>
 						<div id="fileInfo"></div>
 					</div>
 					<div id="resultsDiv" style="display: none;"></div>
@@ -431,31 +422,27 @@ function htmlGenerateTool() {
 			</nav>
 			<div class="backdrop" id="backdrop"></div>
 			<div class="settings-popover" id="settings-popover">
-				<div class="popover-section"><div class="form-check"><input class="form-check-input" type="checkbox" id="enablePagination" onChange="enablePaginationToggle();"><label class="form-check-label" for="enablePagination" style="font-size: 14px;">Enable Pagination</label></div></div>
+				<div class="popover-section"><div class="form-check"><input class="form-check-input" type="checkbox" id="enablePagination" onChange="togglePaginationOptionsVisibility();"><label class="form-check-label" for="enablePagination" style="font-size: 14px;">Enable Pagination</label></div></div>
 				<div id="pagination-options" style="display: none;">
 					<div class="popover-section">
 						<div class="form-group mb-2"><label for="rowBegin" style="font-size:13px; font-weight: 500;">Return Rows</label><div class="input-group"><input type="number" class="form-control form-control-sm" id="rowBegin" value="1"><div class="input-group-prepend input-group-append"><span class="input-group-text">to</span></div><input type="number" class="form-control form-control-sm" id="rowEnd" value="${rowsReturnedDefault}"></div></div>
-						<div class="form-check"><input class="form-check-input" type="checkbox" id="returnAll" onChange="returnAllToggle();"><label class="form-check-label" for="returnAll" style="font-size: 14px;">Return All Rows</label></div>
+						<div class="form-check"><input class="form-check-input" type="checkbox" id="returnAll" onChange="toggleReturnAllRowsOption();"><label class="form-check-label" for="returnAll" style="font-size: 14px;">Return All Rows</label></div>
 						<div class="form-check"><input class="form-check-input" type="checkbox" id="returnTotals"><label class="form-check-label" for="returnTotals" style="font-size: 14px;">Count Total Rows</label></div>
 					</div>
 				</div>
-				<div class="popover-section"><div class="popover-title">Result Format</div><div class="btn-group btn-group-toggle d-flex" data-toggle="buttons"><label class="btn btn-outline-secondary btn-sm flex-fill active"><input type="radio" name="resultsFormat" value="table" checked onChange="responseGenerate();"> Table</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="resultsFormat" value="csv" onChange="responseGenerate();"> CSV</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="resultsFormat" value="json" onChange="responseGenerate();"> JSON</label></div></div>
-				<div class="popover-section"><div class="popover-title">NULL Display</div><div class="btn-group btn-group-toggle d-flex" data-toggle="buttons"><label class="btn btn-outline-secondary btn-sm flex-fill active"><input type="radio" name="nullFormat" value="dimmed" checked onChange="responseGenerate();"> Dim</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="nullFormat" value="blank" onChange="responseGenerate();"> Blank</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="nullFormat" value="null" onChange="responseGenerate();"> Text</label></div></div>
+				<div class="popover-section"><div class="popover-title">Result Format</div><div class="btn-group btn-group-toggle d-flex" data-toggle="buttons"><label class="btn btn-outline-secondary btn-sm flex-fill active"><input type="radio" name="resultsFormat" value="table" checked onChange="generateResponseOutputBasedOnFormat();"> Table</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="resultsFormat" value="csv" onChange="generateResponseOutputBasedOnFormat();"> CSV</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="resultsFormat" value="json" onChange="generateResponseOutputBasedOnFormat();"> JSON</label></div></div>
+				<div class="popover-section"><div class="popover-title">NULL Display</div><div class="btn-group btn-group-toggle d-flex" data-toggle="buttons"><label class="btn btn-outline-secondary btn-sm flex-fill active"><input type="radio" name="nullFormat" value="dimmed" checked onChange="generateResponseOutputBasedOnFormat();"> Dim</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="nullFormat" value="blank" onChange="generateResponseOutputBasedOnFormat();"> Blank</label><label class="btn btn-outline-secondary btn-sm flex-fill"><input type="radio" name="nullFormat" value="null" onChange="generateResponseOutputBasedOnFormat();"> Text</label></div></div>
 			</div>
-			${htmlLocalLoadModal()}
-			${htmlRemoteLoadModal()}
-			${htmlRecentQueriesModal()}
-			${htmlSaveModal()}
-			${htmlWorkbooksModal()}
+			${generateLocalLibraryLoadModalHtml()}
+			${generateRemoteLibraryLoadModalHtml()}
+			${generateRecentQueriesModalHtml()}
+			${generateSaveQueryModalHtml()}
+			${generateWorkbooksModalHtml()}
 			<script>
-				var activeSQLFile = {}, queryResponsePayload, fileLoadResponsePayload;
+				var editor, activeSQLFile = {}, queryResponsePayload, fileLoadResponsePayload;
 				window.jQuery = window.$ = jQuery;
 
-				// MASTER FIX: Prevent the NetSuite form wrapper from ever submitting.
-				$('form').on('submit', function(e) {
-					e.preventDefault();
-					return false;
-				});
+				$('form').on('submit', function(e) { e.preventDefault(); return false; });
 
 				$(document).ready(function() {
 					const menuToggle = $('#menu-toggle');
@@ -464,6 +451,24 @@ function htmlGenerateTool() {
 					const settingsPopover = $('#settings-popover');
 					const backdrop = $('#backdrop');
 					const fab = $('#run-query-fab');
+
+					editor = CodeMirror.fromTextArea(document.getElementById('query'), {
+						lineNumbers: true,
+						mode: 'text/x-sql',
+						theme: 'material',
+						lineWrapping: true,
+						extraKeys: { "Ctrl-Space": "autocomplete" },
+						hintOptions: { completeSingle: false }
+					});
+
+					editor.on('inputRead', function(cm, event) {
+						if (event.origin !== '+input') return;
+						if (event.text[0] && (/[a-zA-Z]/).test(event.text[0])) {
+							setTimeout(function() { cm.execCommand("autocomplete"); }, 100);
+						}
+					});
+
+					editor.on('change', function() { refreshUnsavedFileStatusIndicator(); });
 
 					function closeAll() {
 						navDrawer.removeClass('open');
@@ -485,10 +490,7 @@ function htmlGenerateTool() {
 						backdrop.removeClass('visible');
 					});
 
-					$('.drawer-menu a').on('click', function() {
-						setTimeout(closeAll, 200);
-					});
-
+					$('.drawer-menu a').on('click', function() { setTimeout(closeAll, 200); });
 					backdrop.on('click', closeAll);
 					$(document).on('click', function(e) {
 						if (!$(e.target).closest('#nav-drawer, #settings-popover, #menu-toggle, #settings-toggle').length) {
@@ -496,102 +498,99 @@ function htmlGenerateTool() {
 						}
 					});
 
-					fab.on('click', querySubmit);
-					$('#tables-ref-link').on('click', function(e) { e.preventDefault(); tablesReferenceOpen(); });
+					fab.on('click', submitQueryForExecution);
+					$('#tables-ref-link').on('click', function(e) { e.preventDefault(); openTablesReferenceWindow(); });
 
-					$('input[type="number"], input[type="text"]').on('keydown', function(e) {
-						if (e.keyCode === 13) {
-							e.preventDefault();
-							return false;
-						}
-					});
-
+					$('input[type="number"], input[type="text"]').on('keydown', function(e) { if (e.keyCode === 13) { e.preventDefault(); return false; } });
+					
 					$(document).keydown(function(e) {
-						if ((e.ctrlKey || e.metaKey) && e.keyCode == 13) { querySubmit(); }
+						if ((e.ctrlKey || e.metaKey) && e.keyCode == 13) { submitQueryForExecution(); }
 						if (e.keyCode === 27) { closeAll(); }
 					});
-					
+
+					setDefaultQueryInEditor();
+					refreshUnsavedFileStatusIndicator();
 				});
-				${jsFunctionDefaultQuerySet()}
-				${jsFunctionEnablePaginationToggle()}
-				${jsFunctionFileInfoRefresh()}
-				${jsFunctionLocalLibraryFilesGet()}
-				${jsFunctionLocalSQLFileLoad()}
-				${jsFunctionLocalSQLFileSave()}
-				${jsFunctionQuerySubmit()}
-				${jsFunctionQueryTextAreaResize()}
-				${jsFunctionRadioFieldValueGet()}
-				${jsFunctionRemoteLibraryIndexGet()}
-				${jsFunctionRemoteSQLFileLoad()}
-				${jsFunctionResponseDataCopy()}
-				${jsFunctionResponseGenerate()}
-				${jsFunctionResponseGenerateCSV()}
-				${jsFunctionResponseGenerateJSON()}
-				${jsFunctionResponseGenerateTable()}
-				${jsFunctionReturnAllToggle()}
-				${jsFunctiontablesReferenceOpen()}
-				${jsFunctionWorkbookLoad()}
-				${jsFunctionWorkbooksListGet()}
-				${jsFunctionRecentQueriesGet()}
-				${jsFunctionRecentQueryLoad()}
-				${jsFunctionRecentQuerySave()}
-				${jqueryModalHandlers()}
-				${jsFunctionTableDetailsGet()}
-				${jsFunctionTableNamesGet()}
-				${jsFunctionTableQueryCopy()}
+				${generateJsForSettingDefaultQuery()}
+				${generateJsForTogglingPaginationOptions()}
+				${generateJsForRefreshingFileInfoDisplay()}
+				${generateJsForGettingLocalLibraryFiles()}
+				${generateJsForLoadingLocalSqlFile()}
+				${generateJsForSavingLocalSqlFile()}
+				${generateJsForSubmittingQuery()}
+				${generateJsForResizingQueryTextArea()}
+				${generateJsForGettingRadioFieldValue()}
+				${generateJsForFetchingRemoteLibraryIndex()}
+				${generateJsForLoadingRemoteSqlFile()}
+				${generateJsForCopyingResponseData()}
+				${generateJsForGeneratingResponseOutput()}
+				${generateJsForGeneratingCsvResponse()}
+				${generateJsForGeneratingJsonResponse()}
+				${generateJsForGeneratingHtmlTableResponse()}
+				${generateJsForTogglingReturnAllRowsOption()}
+				${generateJsForOpeningTablesReference()}
+				${generateJsForLoadingWorkbook()}
+				${generateJsForGettingWorkbooksList()}
+				${generateJsForGettingRecentQueries()}
+				${generateJsForLoadingRecentQuery()}
+				${generateJsForSavingRecentQuery()}
+				${generateJQueryEventHandlersForModals()}
+				${generateJsForGettingTableDetails()}
+				${generateJsForGettingTableNames()}
+				${generateJsForCopyingTableQuery()}
 			</script>
 		</body>
 		</html>
-	`;
+    `;
 }
 
-function htmlGenerateTablesReference(context) {
+function generateTablesReferencePageHtml(context) {
 	var form = serverWidget.createForm({ title: 'SuiteQL Tables Reference', hideNavBar: false });
 	var htmlField = form.addField({ id: 'custpage_field_html', type: serverWidget.FieldType.INLINEHTML, label: 'HTML' });
 	htmlField.defaultValue = `
-		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
-		<script src="/ui/jquery/jquery-3.5.1.min.js"></script>
-		<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-		<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.25/css/jquery.dataTables.css">
- 		<script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.25/js/jquery.dataTables.js"></script>
-		<style> body { font-family: 'Inter', sans-serif; background-color: #f4f6f8; padding: 20px; } p, pre, td, th { font-size: 14px; } th { font-weight: 600; } .card { border: none; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); } .card-header { font-weight: 600; background-color: #fff; } </style>
-		<div class="container-fluid"><div class="row"><div class="col-md-4"><div class="card"><div class="card-header">Tables</div><div class="card-body" id="tablesColumn">Loading...</div></div></div><div class="col-md-8"><div class="card"><div class="card-header">Details</div><div class="card-body" id="tableInfoColumn">Select a table to view its details.</div></div></div></div></div>
-		<script> window.jQuery = window.$ = jQuery; ${jsFunctionTableDetailsGet()} ${jsFunctionTableNamesGet()} ${jsFunctionTableQueryCopy()} tableNamesGet(); </script>
-	`;
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+        <script src="/ui/jquery/jquery-3.5.1.min.js"></script>
+        <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+        <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.25/css/jquery.dataTables.css">
+        <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.25/js/jquery.dataTables.js"></script>
+        <style> body { font-family: 'Inter', sans-serif; background-color: #f4f6f8; padding: 20px; } p, pre, td, th { font-size: 14px; } th { font-weight: 600; } .card { border: none; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); } .card-header { font-weight: 600; background-color: #fff; } </style>
+        <div class="container-fluid"><div class="row"><div class="col-md-4"><div class="card"><div class="card-header">Tables</div><div class="card-body" id="tablesColumn">Loading...</div></div></div><div class="col-md-8"><div class="card"><div class="card-header">Details</div><div class="card-body" id="tableInfoColumn">Select a table to view its details.</div></div></div></div></div>
+        <script> window.jQuery = window.$ = jQuery; ${generateJsForGettingTableDetails()} ${generateJsForGettingTableNames()} ${generateJsForCopyingTableQuery()} fetchAndDisplayAllTableNames(); </script>
+    `;
 	context.response.writePage(form);
 }
 
-function htmlLocalLoadModal() { return `<div class="modal fade" id="localLoadModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Local Query Library</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="localSQLFilesList"></div></div></div></div>`; }
-function htmlRemoteLoadModal() { return `<div class="modal fade" id="remoteLoadModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Remote Query Library</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="remoteSQLFilesList"></div></div></div></div>`; }
-function htmlRecentQueriesModal() { return `<div class="modal fade" id="recentQueriesModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Recent Queries</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="recentQueriesList"></div></div></div></div>`; }
-function htmlSaveModal() { return `<div class="modal fade" id="saveModal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Save Query</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body"><div id="saveQueryMessage" style="display: none;"></div><div id="saveQueryForm" style="display: none;"><div class="form-group"><label for="saveQueryFormFileName">File Name</label><input type="text" class="form-control" id="saveQueryFormFileName"></div><div class="form-group"><label for="saveQueryFormDescription">Description</label><input type="text" class="form-control" id="saveQueryFormDescription"></div><button type="button" class="btn btn-primary" onclick="localSQLFileSave();">Save</button></div></div></div></div>`; }
-function htmlWorkbooksModal() { return workbooksEnabled ? `<div class="modal fade" id="workbooksModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Workbooks</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="workbooksList"></div></div></div></div>` : ``; }
+function generateLocalLibraryLoadModalHtml() { return `<div class="modal fade" id="localLoadModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Local Query Library</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="localSQLFilesList"></div></div></div></div>`; }
+function generateRemoteLibraryLoadModalHtml() { return `<div class="modal fade" id="remoteLoadModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Remote Query Library</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="remoteSQLFilesList"></div></div></div></div>`; }
+function generateRecentQueriesModalHtml() { return `<div class="modal fade" id="recentQueriesModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Recent Queries</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="recentQueriesList"></div></div></div></div>`; }
+function generateSaveQueryModalHtml() { return `<div class="modal fade" id="saveModal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Save Query</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body"><div id="saveQueryMessage" style="display: none;"></div><div id="saveQueryForm" style="display: none;"><div class="form-group"><label for="saveQueryFormFileName">File Name</label><input type="text" class="form-control" id="saveQueryFormFileName"></div><div class="form-group"><label for="saveQueryFormDescription">Description</label><input type="text" class="form-control" id="saveQueryFormDescription"></div><button type="button" class="btn btn-primary" onclick="saveSqlFileToLocalLibraryWithPrompt();">Save</button></div></div></div></div>`; }
+function generateWorkbooksModalHtml() { return workbooksEnabled ? `<div class="modal fade" id="workbooksModal"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h4 class="modal-title">Workbooks</h4><button type="button" class="close" data-dismiss="modal">&times;</button></div><div class="modal-body" id="workbooksList"></div></div></div></div>` : ``; }
 
-function jqueryModalHandlers() { return `$('#localLoadModal').on('shown.bs.modal', function (e) { localLibraryFilesGet(); }); $('#remoteLoadModal').on('shown.bs.modal', function (e) { remoteLibraryIndexGet(); }); $('#recentQueriesModal').on('shown.bs.modal', function (e) { recentQueriesGet(); }); $('#saveModal').on('shown.bs.modal', function (e) { $('#saveQueryMessage, #saveQueryForm').hide(); if ($('#query').val() == '') { $('#saveQueryMessage').html('<p class="text-danger">Please enter a query.</p>').show(); } else { $('#saveQueryForm').show(); $('#saveQueryFormFileName').val(activeSQLFile.fileName || '').focus(); $('#saveQueryFormDescription').val(activeSQLFile.description || ''); } }); $('#workbooksModal').on('shown.bs.modal', function (e) { workbooksListGet(); });`; }
-function jsFunctionDefaultQuerySet() { return `function defaultQuerySet() { $('#query').val('SELECT\\n\\tID,\\n\\tLastName,\\n\\tFirstName,\\n\\tPhone,\\n\\tEmail\\nFROM\\n\\tEmployee\\nLIMIT 10'); }`; }
-function jsFunctionEnablePaginationToggle() { return `function enablePaginationToggle() { const isChecked = $('#enablePagination').is(':checked'); $('#pagination-options').toggle(isChecked); }`; }
-function jsFunctionFileInfoRefresh() { return `function fileInfoRefresh() { var content = ''; if (activeSQLFile.source == undefined) { if ($('#query').val() != '') { content = '<span class="text-danger">Unsaved</span>'; } } else { var status = ($('#query').val() != activeSQLFile.sql) ? 'Changed' : 'Unchanged'; var tooltip = 'Source: ' + activeSQLFile.source + '\\nStatus: ' + status; content = '<span title="' + tooltip + '">' + activeSQLFile.fileName + '</span>'; if (status === 'Changed') { content = '<span class="text-danger">' + content + '</span>'; } } $('#fileInfo').html(content); }`; }
-function jsFunctionQuerySubmit() { return `function querySubmit() { var queryText = $('#query').val(); if (!queryText) { alert('Please enter a query.'); return; } var selectedText = ''; var textArea = document.getElementById('query'); if (textArea.selectionStart !== undefined && textArea.selectionStart != textArea.selectionEnd) { selectedText = textArea.value.substring(textArea.selectionStart, textArea.selectionEnd); } var theQuery = selectedText || queryText; var rowBegin = 1, rowEnd = 999999; if ($('#enablePagination').is(':checked') && !$('#returnAll').is(':checked')) { rowBegin = parseInt($('#rowBegin').val()) || 1; rowEnd = parseInt($('#rowEnd').val()) || ${rowsReturnedDefault}; } $('#resultsDiv').show(); $('#resultsDiv').html('<h5>Running query...</h5>'); var requestPayload = { 'function': 'queryExecute', 'query': theQuery, 'rowBegin': rowBegin, 'rowEnd': rowEnd, 'paginationEnabled': $('#enablePagination').is(':checked'), 'viewsEnabled': false, 'returnTotals': $('#returnTotals').is(':checked') }; $.post({ url: '${scriptURL}', data: JSON.stringify(requestPayload), contentType: 'application/json' }).done(function(response) { queryResponsePayload = response; if (queryResponsePayload.error) { $('#resultsDiv').html('<h5 class="text-danger">Error</h5><pre>' + queryResponsePayload.error.message + '</pre>'); } else { recentQuerySave(theQuery); responseGenerate(); } }).fail(function(xhr) { $('#resultsDiv').html('<h5 class="text-danger">Error</h5><pre>XHR Error: ' + xhr.status + ' ' + xhr.statusText + '</pre>'); }); }`; }
-function jsFunctionQueryTextAreaResize() { return `function queryTextAreaResize() { /* Auto-resize handled by flexbox */ }`; }
-function jsFunctionRadioFieldValueGet() { return `function radioFieldValueGet(name) { return $('input[name="' + name + '"]:checked').val(); }`; }
-function jsFunctionRemoteLibraryIndexGet() { return `function remoteLibraryIndexGet() { $('#remoteSQLFilesList').html('<h5>Loading...</h5>'); $.getJSON('https://suiteql.s3.us-east-1.amazonaws.com/queries/index.json?nonce=' + new Date().getTime()).done(function(payload) { let content = '<table id="remoteFilesTable" class="table table-sm table-hover" style="width:100%"><thead><tr><th>Name</th><th>Description</th><th></th></tr></thead><tbody>'; payload.forEach(r => { content += '<tr><td>' + r.name + '</td><td>' + r.description + '</td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="remoteSQLFileLoad(\\\`' + r.fileName + '\\\`)">Load</button></td></tr>'; }); content += '</tbody></table>'; $('#remoteSQLFilesList').html(content); if (datatablesEnabled) { $('#remoteFilesTable').DataTable({"pageLength": 10}); } }).fail(function(xhr) { $('#remoteSQLFilesList').html('<p class="text-danger">' + xhr.status + '</p>'); }); }`; }
-function jsFunctionRemoteSQLFileLoad() { return `function remoteSQLFileLoad(filename) { $.get('https://suiteql.s3.us-east-1.amazonaws.com/queries/' + filename + '?nonce=' + new Date().getTime()).done(function(response) { $('#query').val(response); activeSQLFile = { source: 'Remote', fileName: filename, sql: response }; fileInfoRefresh(); $('#remoteLoadModal').modal('hide'); $('#resultsDiv').hide(); }).fail(function(xhr) { alert('Error: ' + xhr.status); }); }`; }
-function jsFunctionResponseDataCopy() { return `function responseDataCopy() { $('#responseData').select(); document.execCommand('copy'); }`; }
-function jsFunctionResponseGenerate() { return `function responseGenerate() { switch (radioFieldValueGet('resultsFormat')) { case 'csv': responseGenerateCSV(); break; case 'json': responseGenerateJSON(); break; default: responseGenerateTable(); } }`; }
-function jsFunctionResponseGenerateCSV() { return `function responseGenerateCSV() { if (!queryResponsePayload || !queryResponsePayload.records || queryResponsePayload.records.length === 0) { $('#resultsDiv').html('<h5 class="text-warning">No records to display.</h5>'); return; } const columnNames = Object.keys(queryResponsePayload.records[0]); let csv = '"' + columnNames.join('","') + '"\\r\\n'; queryResponsePayload.records.forEach(record => { let values = columnNames.map(col => { let val = record[col] === null ? '' : String(record[col]); return '"' + val.replace(/"/g, '""') + '"'; }); csv += values.join(',') + '\\r\\n'; }); let header = '<div class="results-header"><div class="results-title">CSV Results</div><div class="results-meta">' + queryResponsePayload.records.length + ' rows in ' + queryResponsePayload.elapsedTime + 'ms</div></div>'; $('#resultsDiv').html(header + '<textarea id="responseData" class="form-control" rows="10">' + csv + '</textarea>'); }`; }
-function jsFunctionResponseGenerateJSON() { return `function responseGenerateJSON() { let header = '<div class="results-header"><div class="results-title">JSON Results</div><div class="results-meta">' + queryResponsePayload.records.length + ' rows in ' + queryResponsePayload.elapsedTime + 'ms</div></div>'; let jsonString = JSON.stringify(queryResponsePayload.records, null, 2); $('#resultsDiv').html(header + '<textarea id="responseData" class="form-control" rows="10">' + jsonString + '</textarea>'); }`; }
-function jsFunctionResponseGenerateTable() { return `function responseGenerateTable() { if (!queryResponsePayload || !queryResponsePayload.records || queryResponsePayload.records.length === 0) { $('#resultsDiv').html('<h5 class="text-warning">No records found.</h5>'); return; } const records = queryResponsePayload.records; const columnNames = Object.keys(records[0]); let header = '<div class="results-header"><div class="results-title">Results</div><div class="results-meta">' + records.length + ' rows returned in ' + queryResponsePayload.elapsedTime + 'ms.</div></div>'; let table = '<div class="table-responsive" style="overflow-y: auto; flex-grow: 1;"><table id="resultsTable" class="table table-sm table-hover" style="width:100%"><thead><tr>'; columnNames.forEach(col => { table += '<th>' + col + '</th>'; }); table += '</tr></thead><tbody>'; const nullFormat = radioFieldValueGet('nullFormat'); records.forEach(rec => { table += '<tr>'; columnNames.forEach(col => { let val = rec[col]; if (val === null) { if (nullFormat === 'blank') val = ''; else if (nullFormat === 'dimmed') val = '<span style="color: #ccc;">null</span>'; else val = 'null'; } table += '<td>' + val + '</td>'; }); table += '</tr>'; }); table += '</tbody></table></div>'; $('#resultsDiv').html(header + table); if (datatablesEnabled) { $('#resultsTable').DataTable({"pageLength": 10, "scrollX": true}); } }`; }
-function jsFunctionReturnAllToggle() { return `function returnAllToggle() { $('#rowBegin, #rowEnd').prop('disabled', $('#returnAll').is(':checked')); }`; }
-function jsFunctiontablesReferenceOpen() { return `function tablesReferenceOpen() { window.open('${scriptURL}&function=tablesReference', '_tablesRef'); }`; }
-function jsFunctionRecentQueriesGet() { return `function recentQueriesGet() { let recentQueries = JSON.parse(localStorage.getItem('suiteql_recentQueries') || '[]'); let content = ''; if (recentQueries.length === 0) { content = '<p>No recent queries found.</p>'; } else { content = '<table class="table table-sm table-hover"><thead><tr><th>Query</th><th></th></tr></thead><tbody>'; recentQueries.forEach((query, index) => { let displayQuery = query.replace(/\\n|\\t/g, ' ').trim(); content += '<tr><td><code class="code-snippet">' + displayQuery + '</code></td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="recentQueryLoad(' + index + ')">Load</button></td></tr>'; }); content += '</tbody></table>'; } $('#recentQueriesList').html(content); }`; }
-function jsFunctionRecentQueryLoad() { return `function recentQueryLoad(index) { let recentQueries = JSON.parse(localStorage.getItem('suiteql_recentQueries') || '[]'); if (recentQueries[index]) { $('#query').val(recentQueries[index]); $('#recentQueriesModal').modal('hide'); $('#resultsDiv').hide(); activeSQLFile = {}; fileInfoRefresh(); } }`; }
-function jsFunctionRecentQuerySave() { return `function recentQuerySave(queryToSave) { const MAX_RECENT_QUERIES = 20; let recentQueries = JSON.parse(localStorage.getItem('suiteql_recentQueries') || '[]'); const existingIndex = recentQueries.indexOf(queryToSave); if (existingIndex > -1) { recentQueries.splice(existingIndex, 1); } recentQueries.unshift(queryToSave); if (recentQueries.length > MAX_RECENT_QUERIES) { recentQueries = recentQueries.slice(0, MAX_RECENT_QUERIES); } localStorage.setItem('suiteql_recentQueries', JSON.stringify(recentQueries)); }`; }
-function jsFunctionTableDetailsGet() { return `function tableDetailsGet(tableName) { $('#tableInfoColumn').html('<h5>Loading ' + tableName + '...</h5>'); var url = '/app/recordscatalog/rcendpoint.nl?action=getRecordTypeDetail&data=' + encodeURI(JSON.stringify({ scriptId: tableName, detailType: 'SS_ANAL' })); $.getJSON(url).done(function(response) { let recordDetail = response.data; let content = '<h4 class="mb-3">' + recordDetail.label + ' ("' + tableName + '")</h4>'; content += '<h5>Columns</h5><table class="table table-sm" id="tableColumnsTable"><thead><tr><th>Label</th><th>Name</th><th>Type</th></tr></thead><tbody>'; recordDetail.fields.forEach(f => { if (f.isColumn) { content += '<tr><td>' + f.label + '</td><td>' + f.id + '</td><td>' + f.dataType + '</td></tr>'; } }); content += '</tbody></table>'; $('#tableInfoColumn').html(content); if (datatablesEnabled) { $('#tableColumnsTable').DataTable({"pageLength": 10}); } }); }`; }
-function jsFunctionTableNamesGet() { return `function tableNamesGet() { var url = '/app/recordscatalog/rcendpoint.nl?action=getRecordTypes&data=' + encodeURI(JSON.stringify({ structureType: 'FLAT' })); $.getJSON(url).done(function(response) { let recordTypes = response.data; let content = '<table class="table table-sm table-hover" id="tableNamesTable"><thead><tr><th>Table Name</th></tr></thead><tbody>'; recordTypes.forEach(rt => { content += '<tr><td><a href="#" onclick="tableDetailsGet(\\\`' + rt.id + '\\\`)">' + rt.label + '</a><br><small class="text-muted">' + rt.id + '</small></td></tr>'; }); content += '</tbody></table>'; $('#tablesColumn').html(content); if (datatablesEnabled) { $('#tableNamesTable').DataTable({"pageLength": 10}); } }); }`; }
-function jsFunctionTableQueryCopy() { return `function tableQueryCopy() { $('#tableQuery').select(); document.execCommand('copy'); }`; }
+function generateJQueryEventHandlersForModals() { return `$('#localLoadModal').on('shown.bs.modal', function (e) { fetchAndDisplayLocalLibraryFiles(); }); $('#remoteLoadModal').on('shown.bs.modal', function (e) { fetchAndDisplayRemoteLibraryIndex(); }); $('#recentQueriesModal').on('shown.bs.modal', function (e) { displayRecentQueriesFromLocalStorage(); }); $('#saveModal').on('shown.bs.modal', function (e) { $('#saveQueryMessage, #saveQueryForm').hide(); if (editor.getValue() == '') { $('#saveQueryMessage').html('<p class="text-danger">Please enter a query.</p>').show(); } else { $('#saveQueryForm').show(); $('#saveQueryFormFileName').val(activeSQLFile.fileName || '').focus(); $('#saveQueryFormDescription').val(activeSQLFile.description || ''); } }); $('#workbooksModal').on('shown.bs.modal', function (e) { fetchAndDisplayWorkbooksList(); });`; }
+function generateJsForSettingDefaultQuery() { return `function setDefaultQueryInEditor() { editor.setValue('SELECT\\n\\tID,\\n\\tLastName,\\n\\tFirstName,\\n\\tPhone,\\n\\tEmail\\nFROM\\n\\tEmployee'); }`; }
+function generateJsForTogglingPaginationOptions() { return `function togglePaginationOptionsVisibility() { const isChecked = $('#enablePagination').is(':checked'); $('#pagination-options').toggle(isChecked); }`; }
+function generateJsForRefreshingFileInfoDisplay() { return `function refreshUnsavedFileStatusIndicator() { var content = ''; if (activeSQLFile.source == undefined) { if (editor.getValue() != '') { content = '<span class="text-danger">Unsaved</span>'; } } else { var status = (editor.getValue() != activeSQLFile.sql) ? 'Changed' : 'Unchanged'; var tooltip = 'Source: ' + activeSQLFile.source + '\\nStatus: ' + status; content = '<span title="' + tooltip + '">' + activeSQLFile.fileName + '</span>'; if (status === 'Changed') { content = '<span class="text-danger">' + content + '</span>'; } } $('#fileInfo').html(content); }`; }
+function generateJsForSubmittingQuery() { return `function submitQueryForExecution() { var queryText = editor.getValue(); if (!queryText) { alert('Please enter a query.'); return; } var selectedText = editor.getSelection(); var theQuery = selectedText || queryText; var rowBegin = 1, rowEnd = 999999; if ($('#enablePagination').is(':checked') && !$('#returnAll').is(':checked')) { rowBegin = parseInt($('#rowBegin').val()) || 1; rowEnd = parseInt($('#rowEnd').val()) || ${rowsReturnedDefault}; } $('#resultsDiv').show(); $('#resultsDiv').html('<h5>Running query...</h5>'); var requestPayload = { 'function': 'queryExecute', 'query': theQuery, 'rowBegin': rowBegin, 'rowEnd': rowEnd, 'paginationEnabled': $('#enablePagination').is(':checked'), 'viewsEnabled': false, 'returnTotals': $('#returnTotals').is(':checked') }; $.post({ url: '${scriptURL}', data: JSON.stringify(requestPayload), contentType: 'application/json' }).done(function(response) { queryResponsePayload = response; if (queryResponsePayload.error) { $('#resultsDiv').html('<h5 class="text-danger">Error</h5><pre>' + queryResponsePayload.error.message + '</pre>'); } else { saveQueryToRecentQueries(theQuery); generateResponseOutputBasedOnFormat(); } }).fail(function(xhr) { $('#resultsDiv').html('<h5 class="text-danger">Error</h5><pre>XHR Error: ' + xhr.status + ' ' + xhr.statusText + '</pre>'); }); }`; }
+function generateJsForResizingQueryTextArea() { return `function resizeQueryTextArea() { /* Auto-resize handled by flexbox and CodeMirror */ }`; }
+function generateJsForGettingRadioFieldValue() { return `function getCheckedRadioValue(name) { return $('input[name="' + name + '"]:checked').val(); }`; }
+function generateJsForFetchingRemoteLibraryIndex() { return `function fetchAndDisplayRemoteLibraryIndex() { $('#remoteSQLFilesList').html('<h5>Loading...</h5>'); $.getJSON('https://suiteql.s3.us-east-1.amazonaws.com/queries/index.json?nonce=' + new Date().getTime()).done(function(payload) { let content = '<table id="remoteFilesTable" class="table table-sm table-hover" style="width:100%"><thead><tr><th>Name</th><th>Description</th><th></th></tr></thead><tbody>'; payload.forEach(r => { content += '<tr><td>' + r.name + '</td><td>' + r.description + '</td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="loadSqlFileFromRemoteLibrary(\\\`' + r.fileName + '\\\`)">Load</button></td></tr>'; }); content += '</tbody></table>'; $('#remoteSQLFilesList').html(content); if (datatablesEnabled) { $('#remoteFilesTable').DataTable({"pageLength": 10}); } }).fail(function(xhr) { $('#remoteSQLFilesList').html('<p class="text-danger">' + xhr.status + '</p>'); }); }`; }
+function generateJsForLoadingRemoteSqlFile() { return `function loadSqlFileFromRemoteLibrary(filename) { $.get('https://suiteql.s3.us-east-1.amazonaws.com/queries/' + filename + '?nonce=' + new Date().getTime()).done(function(response) { editor.setValue(response); activeSQLFile = { source: 'Remote', fileName: filename, sql: response }; refreshUnsavedFileStatusIndicator(); $('#remoteLoadModal').modal('hide'); $('#resultsDiv').hide(); }).fail(function(xhr) { alert('Error: ' + xhr.status); }); }`; }
+function generateJsForCopyingResponseData() { return `function copyResponseDataToClipboard() { $('#responseData').select(); document.execCommand('copy'); }`; }
+function generateJsForGeneratingResponseOutput() { return `function generateResponseOutputBasedOnFormat() { switch (getCheckedRadioValue('resultsFormat')) { case 'csv': generateCsvFromResponseData(); break; case 'json': generateJsonFromResponseData(); break; default: generateHtmlTableFromResponseData(); } }`; }
+function generateJsForGeneratingCsvResponse() { return `function generateCsvFromResponseData() { if (!queryResponsePayload || !queryResponsePayload.records || queryResponsePayload.records.length === 0) { $('#resultsDiv').html('<h5 class="text-warning">No records to display.</h5>'); return; } const columnNames = Object.keys(queryResponsePayload.records[0]); let csv = '"' + columnNames.join('","') + '"\\r\\n'; queryResponsePayload.records.forEach(record => { let values = columnNames.map(col => { let val = record[col] === null ? '' : String(record[col]); return '"' + val.replace(/"/g, '""') + '"'; }); csv += values.join(',') + '\\r\\n'; }); let header = '<div class="results-header"><div class="results-title">CSV Results</div><div class="results-meta">' + queryResponsePayload.records.length + ' rows in ' + queryResponsePayload.elapsedTime + 'ms</div></div>'; $('#resultsDiv').html(header + '<textarea id="responseData" class="form-control" rows="10">' + csv + '</textarea>'); }`; }
+function generateJsForGeneratingJsonResponse() { return `function generateJsonFromResponseData() { let header = '<div class="results-header"><div class="results-title">JSON Results</div><div class="results-meta">' + queryResponsePayload.records.length + ' rows in ' + queryResponsePayload.elapsedTime + 'ms</div></div>'; let jsonString = JSON.stringify(queryResponsePayload.records, null, 2); $('#resultsDiv').html(header + '<textarea id="responseData" class="form-control" rows="10">' + jsonString + '</textarea>'); }`; }
+function generateJsForGeneratingHtmlTableResponse() { return `function generateHtmlTableFromResponseData() { if (!queryResponsePayload || !queryResponsePayload.records || queryResponsePayload.records.length === 0) { $('#resultsDiv').html('<h5 class="text-warning">No records found.</h5>'); return; } const records = queryResponsePayload.records; const columnNames = Object.keys(records[0]); let header = '<div class="results-header"><div class="results-title">Results</div><div class="results-meta">' + records.length + ' rows returned in ' + queryResponsePayload.elapsedTime + 'ms.</div></div>'; let table = '<div class="table-responsive" style="overflow-y: auto; flex-grow: 1;"><table id="resultsTable" class="table table-sm table-hover" style="width:100%"><thead><tr>'; columnNames.forEach(col => { table += '<th>' + col + '</th>'; }); table += '</tr></thead><tbody>'; const nullFormat = getCheckedRadioValue('nullFormat'); records.forEach(rec => { table += '<tr>'; columnNames.forEach(col => { let val = rec[col]; if (val === null) { if (nullFormat === 'blank') val = ''; else if (nullFormat === 'dimmed') val = '<span style="color: #ccc;">null</span>'; else val = 'null'; } table += '<td>' + val + '</td>'; }); table += '</tr>'; }); table += '</tbody></table></div>'; $('#resultsDiv').html(header + table); if (datatablesEnabled) { $('#resultsTable').DataTable({"pageLength": 10, "scrollX": true}); } }`; }
+function generateJsForTogglingReturnAllRowsOption() { return `function toggleReturnAllRowsOption() { $('#rowBegin, #rowEnd').prop('disabled', $('#returnAll').is(':checked')); }`; }
+function generateJsForOpeningTablesReference() { return `function openTablesReferenceWindow() { window.open('${scriptURL}&function=tablesReference', '_tablesRef'); }`; }
+function generateJsForGettingRecentQueries() { return `function displayRecentQueriesFromLocalStorage() { let recentQueries = JSON.parse(localStorage.getItem('suiteql_recentQueries') || '[]'); let content = ''; if (recentQueries.length === 0) { content = '<p>No recent queries found.</p>'; } else { content = '<table class="table table-sm table-hover"><thead><tr><th>Query</th><th></th></tr></thead><tbody>'; recentQueries.forEach((query, index) => { let displayQuery = query.replace(/\\n|\\t/g, ' ').trim(); content += '<tr><td><code class="code-snippet">' + displayQuery + '</code></td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="loadQueryFromRecentQueries(' + index + ')">Load</button></td></tr>'; }); content += '</tbody></table>'; } $('#recentQueriesList').html(content); }`; }
+function generateJsForLoadingRecentQuery() { return `function loadQueryFromRecentQueries(index) { let recentQueries = JSON.parse(localStorage.getItem('suiteql_recentQueries') || '[]'); if (recentQueries[index]) { editor.setValue(recentQueries[index]); $('#recentQueriesModal').modal('hide'); $('#resultsDiv').hide(); activeSQLFile = {}; refreshUnsavedFileStatusIndicator(); } }`; }
+function generateJsForSavingRecentQuery() { return `function saveQueryToRecentQueries(queryToSave) { const MAX_RECENT_QUERIES = 20; let recentQueries = JSON.parse(localStorage.getItem('suiteql_recentQueries') || '[]'); const existingIndex = recentQueries.indexOf(queryToSave); if (existingIndex > -1) { recentQueries.splice(existingIndex, 1); } recentQueries.unshift(queryToSave); if (recentQueries.length > MAX_RECENT_QUERIES) { recentQueries = recentQueries.slice(0, MAX_RECENT_QUERIES); } localStorage.setItem('suiteql_recentQueries', JSON.stringify(recentQueries)); }`; }
+function generateJsForGettingTableDetails() { return `function fetchAndDisplayTableDetails(tableName) { $('#tableInfoColumn').html('<h5>Loading ' + tableName + '...</h5>'); var url = '/app/recordscatalog/rcendpoint.nl?action=getRecordTypeDetail&data=' + encodeURI(JSON.stringify({ scriptId: tableName, detailType: 'SS_ANAL' })); $.getJSON(url).done(function(response) { let recordDetail = response.data; let content = '<h4 class="mb-3">' + recordDetail.label + ' ("' + tableName + '")</h4>'; content += '<h5>Columns</h5><table class="table table-sm" id="tableColumnsTable"><thead><tr><th>Label</th><th>Name</th><th>Type</th></tr></thead><tbody>'; recordDetail.fields.forEach(f => { if (f.isColumn) { content += '<tr><td>' + f.label + '</td><td>' + f.id + '</td><td>' + f.dataType + '</td></tr>'; } }); content += '</tbody></table>'; $('#tableInfoColumn').html(content); if (datatablesEnabled) { $('#tableColumnsTable').DataTable({"pageLength": 10}); } }); }`; }
+function generateJsForGettingTableNames() { return `function fetchAndDisplayAllTableNames() { var url = '/app/recordscatalog/rcendpoint.nl?action=getRecordTypes&data=' + encodeURI(JSON.stringify({ structureType: 'FLAT' })); $.getJSON(url).done(function(response) { let recordTypes = response.data; let content = '<table class="table table-sm table-hover" id="tableNamesTable"><thead><tr><th>Table Name</th></tr></thead><tbody>'; recordTypes.forEach(rt => { content += '<tr><td><a href="#" onclick="fetchAndDisplayTableDetails(\\\`' + rt.id + '\\\`)">' + rt.label + '</a><br><small class="text-muted">' + rt.id + '</small></td></tr>'; }); content += '</tbody></table>'; $('#tablesColumn').html(content); if (datatablesEnabled) { $('#tableNamesTable').DataTable({"pageLength": 10}); } }); }`; }
+function generateJsForCopyingTableQuery() { return `function copyTableQueryToClipboard() { $('#tableQuery').select(); document.execCommand('copy'); }`; }
 
-function jsFunctionLocalLibraryFilesGet() {
-	return `function localLibraryFilesGet() {
+function generateJsForGettingLocalLibraryFiles() {
+	return `function fetchAndDisplayLocalLibraryFiles() {
 		$('#localSQLFilesList').html('<h5>Loading...</h5>');
 		$.post({
 			url: '${scriptURL}',
@@ -604,7 +603,7 @@ function jsFunctionLocalLibraryFilesGet() {
 			}
 			let content = '<table id="localFilesTable" class="table table-sm table-hover" style="width:100%"><thead><tr><th>Name</th><th>Description</th><th></th></tr></thead><tbody>';
 			payload.records.forEach(r => {
-				content += '<tr><td>' + (r.name || '') + '</td><td>' + (r.description || '') + '</td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="localSQLFileLoad(' + r.id + ')">Load</button></td></tr>';
+				content += '<tr><td>' + (r.name || '') + '</td><td>' + (r.description || '') + '</td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="loadSqlFileFromLocalLibraryById(' + r.id + ')">Load</button></td></tr>';
 			});
 			content += '</tbody></table>';
 			$('#localSQLFilesList').html(content);
@@ -615,17 +614,17 @@ function jsFunctionLocalLibraryFilesGet() {
 	}`;
 }
 
-function jsFunctionLocalSQLFileLoad() {
-	return `function localSQLFileLoad(fileID) {
+function generateJsForLoadingLocalSqlFile() {
+	return `function loadSqlFileFromLocalLibraryById(fileID) {
 		$.post({
 			url: '${scriptURL}',
 			data: JSON.stringify({ 'function': 'sqlFileLoad', 'fileID': fileID }),
 			contentType: 'application/json'
 		}).done(function(payload) {
 			if (payload.error) { alert('Error: ' + payload.error); return; }
-			$('#query').val(payload.sql);
+			editor.setValue(payload.sql);
 			activeSQLFile = { source: 'Local', fileName: payload.file.name, description: payload.file.description, fileID: payload.file.id, sql: payload.sql };
-			fileInfoRefresh();
+			refreshUnsavedFileStatusIndicator();
 			$('#localLoadModal').modal('hide');
 			$('#resultsDiv').hide();
 		}).fail(function(xhr) {
@@ -634,8 +633,8 @@ function jsFunctionLocalSQLFileLoad() {
 	}`;
 }
 
-function jsFunctionLocalSQLFileSave() {
-	return `function localSQLFileSave() {
+function generateJsForSavingLocalSqlFile() {
+	return `function saveSqlFileToLocalLibraryWithPrompt() {
 		var filename = $('#saveQueryFormFileName').val();
 		if (!filename) { alert('Please enter a file name.'); return; }
 		$.post({
@@ -649,7 +648,7 @@ function jsFunctionLocalSQLFileSave() {
 			var savePayload = {
 				'function': 'sqlFileSave',
 				'filename': filename,
-				'contents': $('#query').val(),
+				'contents': editor.getValue(),
 				'description': $('#saveQueryFormDescription').val()
 			};
 			$.post({
@@ -659,7 +658,7 @@ function jsFunctionLocalSQLFileSave() {
 			}).done(function(fileSavePayload) {
 				if (fileSavePayload.error) { alert('Error: ' + fileSavePayload.error); return; }
 				activeSQLFile = { source: 'Local', fileName: filename, description: savePayload.description, fileID: fileSavePayload.fileID, sql: savePayload.contents };
-				fileInfoRefresh();
+				refreshUnsavedFileStatusIndicator();
 				alert('File saved.');
 				$('#saveModal').modal('hide');
 			}).fail(function(xhr) {
@@ -671,27 +670,27 @@ function jsFunctionLocalSQLFileSave() {
 	}`;
 }
 
-function jsFunctionWorkbookLoad() {
-	return `function workbookLoad(scriptID) {
+function generateJsForLoadingWorkbook() {
+	return `function loadQueryFromWorkbookById(scriptID) {
 		$.post({
 			url: '${scriptURL}',
 			data: JSON.stringify({ 'function': 'workbookLoad', 'scriptID': scriptID }),
 			contentType: 'application/json'
 		}).done(function(payload) {
 			if (payload.error) { alert('Error: ' + payload.error); return; }
-			$('#query').val(payload.sql);
+			editor.setValue(payload.sql);
 			$('#workbooksModal').modal('hide');
 			$('#resultsDiv').hide();
 			activeSQLFile = { source: 'Workbook ' + scriptID, fileName: '', description: '', fileID: '', sql: payload.sql };
-			fileInfoRefresh();
+			refreshUnsavedFileStatusIndicator();
 		}).fail(function(xhr) {
 			alert('Error: ' + xhr.status);
 		});
 	}`;
 }
 
-function jsFunctionWorkbooksListGet() {
-	return `function workbooksListGet() {
+function generateJsForGettingWorkbooksList() {
+	return `function fetchAndDisplayWorkbooksList() {
 		$('#workbooksList').html('<h5>Loading...</h5>');
 		$.post({
 			url: '${scriptURL}',
@@ -704,7 +703,7 @@ function jsFunctionWorkbooksListGet() {
 			}
 			let content = '<table id="workbooksTable" class="table table-sm table-hover" style="width:100%"><thead><tr><th>Name</th><th>Description</th><th>Owner</th><th></th></tr></thead><tbody>';
 			payload.records.forEach(r => {
-				content += '<tr><td>' + (r.name || '') + '</td><td>' + (r.description || '') + '</td><td>' + (r.owner || '') + '</td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="workbookLoad(\\\`' + r.scriptid + '\\\`)">Load</button></td></tr>';
+				content += '<tr><td>' + (r.name || '') + '</td><td>' + (r.description || '') + '</td><td>' + (r.owner || '') + '</td><td class="text-right"><button class="btn btn-sm btn-primary" onclick="loadQueryFromWorkbookById(\\\`' + r.scriptid + '\\\`)">Load</button></td></tr>';
 			});
 			content += '</tbody></table>';
 			$('#workbooksList').html(content);
